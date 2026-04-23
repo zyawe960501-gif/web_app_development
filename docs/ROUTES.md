@@ -1,71 +1,90 @@
-# 路由與頁面設計文件 (ROUTES)
+# 路由設計文件 (ROUTES)
 
-本文件依據 `docs/PRD.md`、`docs/FLOWCHART.md` 與 `docs/DB_DESIGN.md` 定義系統所有的 Flask HTTP 路由、對應的處理邏輯與 Jinja2 模板清單，作為後端邏輯與前端介面整合的標準文件。
+本文件基於前面的設計文件，定義「線上撲克牌桌遊網站」的 HTTP 路由與 WebSocket 事件規劃，供前後端開發與串接參考。
+
+---
 
 ## 1. 路由總覽表格
 
 | 功能 | HTTP 方法 | URL 路徑 | 對應模板 | 說明 |
-| --- | --- | --- | --- | --- |
-| 首頁重導向 | GET | `/` | — | 將造訪者重新導向至 `/lobby` 或登入頁 |
-| 註冊首頁 | GET | `/auth/register` | `templates/auth/register.html` | 顯示使用者註冊表單 |
-| 處理註冊 | POST | `/auth/register` | — | 接收帳號密碼，建立 User，完成後導向登入頁 |
-| 登入首頁 | GET | `/auth/login` | `templates/auth/login.html` | 顯示使用者登入表單 |
-| 處理登入 | POST | `/auth/login` | — | 驗證密碼，成功後建立 Session 並導向 `/lobby` |
-| 使用者登出 | GET | `/auth/logout` | — | 清除 Session 改為未登入狀態，導向 `/auth/login` |
-| 遊戲大廳 | GET | `/lobby` | `templates/game/lobby.html` | 取得等待中公開房間，顯示列表與新增按鈕 |
-| 建立房間 | POST | `/api/room/create` | — | 於 DB 建立新 Room 記錄並導向 `/room/<room_id>` |
-| 遊戲桌面 | GET | `/room/<room_id>` | `templates/game/room.html` | 該場對戰桌面，連線 WebSocket，開始遊戲 |
-| 戰績與排行 | GET | `/leaderboard` | `templates/game/leaderboard.html`| 查詢積分排名與該名玩家的歷史成績紀錄 |
+| :--- | :--- | :--- | :--- | :--- |
+| **大廳首頁** | `GET` | `/` | `main/index.html` | 顯示輸入暱稱表單以及「建立房間」、「加入特定房間」、「快速配對」的操作按鈕。 |
+| **建立房間** | `POST` | `/room/create` | — | 接收玩家暱稱，在 DB 建立 User 與 Room，成功後重導向至房間頁面。 |
+| **加入特定房間** | `POST` | `/room/join` | — | 接收暱稱與特定的 6 碼房號，將玩家設為 guest 後重導向至房間頁面。 |
+| **快速配對** | `POST` | `/room/quick_match` | — | 接收暱稱，由系統隨機尋找 `status='waiting'` 且有空位的房間，並重導向過去。 |
+| **遊戲房間頁** | `GET` | `/room/<room_code>` | `room/game.html` | 顯示遊戲對戰桌布，並在此頁面載入 Socket.IO 的 JS 腳本建立連線。 |
+
+### WebSocket 事件清單 (補充)
+
+由於專案核心對戰依賴 SocketIO，以下為對應的事件規劃：
+
+| 功能 | 類型 (Emit/Broadcast) | Event 名稱 | 說明 |
+| :--- | :--- | :--- | :--- |
+| **加入房間** | `Client -> Server` | `join_room` | 前端載入畫面後，傳送 `room_code` 與 `user_id` 加入 WebSocket 房間。 |
+| **遊戲開始** | `Server -> Client` | `game_start` | 人數到齊後，伺服器洗牌並廣播手牌給對應玩家。 |
+| **玩家出牌** | `Client -> Server` | `play_card` | 玩家在自己的回合出牌時觸發，傳送卡牌資訊。 |
+| **狀態更新** | `Server -> Client` | `update_state` | 伺服器驗證出牌後，廣播最新的桌面狀態（誰的回合、出了什麼牌）。 |
+| **遊戲結算** | `Server -> Client` | `game_over` | 滿足勝利條件時，廣播勝負結果。 |
+
+---
 
 ## 2. 每個路由的詳細說明
 
-### 2.1 首頁與大廳
-- **GET `/`**
-  - **處理邏輯**：檢查 session 是否已登入。
-  - **輸出**：有登入重導向 `/lobby`，未登入重導向 `/auth/login`。
-- **GET `/lobby`**
-  - **處理邏輯**：檢查登入狀態。調用 `Room.get_all_waiting_public()` 取得所有等待中房間。
-  - **輸出**：渲染 `templates/game/lobby.html`，傳遞 `rooms` 與 目前使用者資料給前端。
+### `GET /`
+- **輸入**：無。
+- **處理邏輯**：單純渲染首頁畫面，不需讀取資料庫。
+- **輸出**：渲染 `main/index.html`。
 
-### 2.2 帳號與身份驗證 (Auth)
-- **GET `/auth/register`**
-  - **輸出**：渲染 `register.html` 註冊表單頁面。
-- **POST `/auth/register`**
-  - **輸入**：表單欄位 `username`, `password`。
-  - **處理邏輯**：將密碼以 bcrypt 加密，呼叫 `User.create()`。若帳號已存在則產生 flash error。
-  - **輸出**：重導向 `/auth/login`。
-- **GET `/auth/login`**
-  - **輸出**：渲染 `login.html` 進入系統。
-- **POST `/auth/login`**
-  - **輸入**：表單欄位 `username`, `password`。
-  - **處理邏輯**：找尋 User、查核密碼是否正確，設定 session。
-  - **輸出**：成功導向 `/lobby`，失敗則返回 `login.html` 並快顯錯誤。
-- **GET `/auth/logout`**
-  - **處理邏輯**：將使用者的 session (`user_id`) 清除。
+### `POST /room/create`
+- **輸入**：表單欄位 `nickname` (玩家暱稱)。
+- **處理邏輯**：
+  1. 呼叫 `User.create(nickname)`。
+  2. 產生一組隨機 6 碼字串作為 `room_code`。
+  3. 呼叫 `Room.create(room_code, host_id)`。
+  4. 將 `user_id` 存入 Flask Session 中。
+- **輸出**：重導向至 `/room/<room_code>`。
+- **錯誤處理**：如果暱稱空白，回傳 400 錯誤或 flash 訊息並重導向回 `/`。
 
-### 2.3 房間與遊戲對戰 (Game & Room)
-- **POST `/api/room/create`**
-  - **輸入**：透過表單或按鈕提交房間名稱 `name` 與 `is_private`。
-  - **處理邏輯**：驗證是否登入。呼叫 `Room.create()`，設定房主。
-  - **輸出**：重導向至 `GET /room/<新增的room_id>`。
-- **GET `/room/<room_id>`**
-  - **輸入**：路徑參數 `room_id`。
-  - **處理邏輯**：擷取 Room 狀態，確認使用者是否為兩名參與者之一或房間尚未滿員。
-  - **輸出**：渲染 `templates/game/room.html`，並向前端暴露該房間 ID 供 WebSocket 腳本連線使用。若房間不存在或無權加入則顯示 404/錯誤，重導回 lobby。
-- **GET `/leaderboard`**
-  - **處理邏輯**：從 DB 透過 sqlalchemy 排序出全服最高分玩家 (limit 10)，以及取得目前登入者的所有 `MatchRecord`。
-  - **輸出**：渲染 `templates/game/leaderboard.html`，並帶入參數排行榜、歷史場次。
+### `POST /room/join`
+- **輸入**：表單欄位 `nickname`、`room_code`。
+- **處理邏輯**：
+  1. 尋找該 `room_code` 的房間。
+  2. 確保房間狀態為 `waiting` 且 `guest_id` 為空。
+  3. 建立 `User` 並將 `user_id` 存入 Session。
+  4. 呼叫 `Room.join_room()` 更新房間資訊。
+- **輸出**：重導向至 `/room/<room_code>`。
+- **錯誤處理**：若房間不存在或已滿，flash 錯誤訊息並重導向回 `/`。
+
+### `POST /room/quick_match`
+- **輸入**：表單欄位 `nickname`。
+- **處理邏輯**：
+  1. 查詢 DB 中第一個 `status == 'waiting'` 的房間。
+  2. 建立 `User` 並存入 Session。
+  3. 若找不到房間，則自動幫玩家轉為呼叫 `/room/create` 邏輯。
+  4. 否則呼叫 `Room.join_room()` 加入該空房間。
+- **輸出**：重導向至 `/room/<room_code>`。
+
+### `GET /room/<room_code>`
+- **輸入**：URL 參數 `room_code`，以及 Session 中的 `user_id`。
+- **處理邏輯**：
+  1. 驗證該房間是否存在。
+  2. 驗證當前 `user_id` 是否為該房間的 `host_id` 或 `guest_id`（防偷窺）。
+- **輸出**：渲染 `room/game.html` 並將 `room_code`, `user_id` 注入模板。
+- **錯誤處理**：無權限或房間不存在則回傳 403 / 404 錯誤頁面。
+
+---
 
 ## 3. Jinja2 模板清單
 
-所有的模板將繼承共用的佈局框架，確保外觀一致以及全站都能載入 Bootstrap 或共通 CSS。
+所有的模板都放在 `app/templates/` 目錄中：
 
-1. **`templates/base.html`**：主頁面框架，包含導覽列、Flash message 與區塊 `{% block content %}`。所有檔案皆繼承自此。
-2. **`templates/auth/login.html`**：使用者登入表單。
-3. **`templates/auth/register.html`**：使用者註冊表單。
-4. **`templates/game/lobby.html`**：大廳畫面，包含「可加入的房間區塊」、「創建房間按鈕/Modal」。
-5. **`templates/game/room.html`**：綠色的桌遊桌面，會有卡牌展示區、對手出牌區以及右下方的實時聊天對話視窗。
-6. **`templates/game/leaderboard.html`**：含有成績列表與排行榜表格的綜合統計資訊頁。
-
-## 4. 路由骨架程式碼
-骨架程式碼已在 `app/routes/` 下自動產生對應的 `auth.py` 與 `main.py` 內容（依循 Flask Blueprint 架構設計）。
+1. **`base.html`**
+   - 包含基礎的 HTML5 骨架、載入 Bootstrap CSS/JS 以及 SocketIO 用戶端腳本。
+   - 提供 `{% block content %}{% endblock %}` 供子模板繼承。
+2. **`main/index.html`**
+   - 繼承自 `base.html`。
+   - 畫面中央有簡單的 Logo 與三組表單按鈕對應 POST 路由。
+3. **`room/game.html`**
+   - 繼承自 `base.html`。
+   - 對戰桌面，分為對手區域（上方）、共用牌桌（中央）、玩家手牌（下方）。
+   - 包含處理 SocketIO 事件的前端 JavaScript 區塊。
