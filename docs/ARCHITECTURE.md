@@ -1,105 +1,111 @@
-# 系統架構設計文件 (ARCHITECTURE) - 線上桌遊系統
+# 系統架構設計文件 (ARCHITECTURE)
 
-這份文件基於 `docs/PRD.md` 的功能需求，規劃線上桌遊系統的技術細節、架構與資料夾結構。
+本文件基於 `docs/PRD.md` 中「線上撲克牌桌遊網站」的功能需求，規劃專案的技術架構、資料夾結構與元件職責。
 
 ---
 
 ## 1. 技術架構說明
 
-本專案採用的核心技術棧如下：
-- **後端框架**：**Python + Flask**，負責處理商業邏輯、使用者驗證與整體頁面路由。
-- **模板引擎**：**Jinja2**，用於處理伺服器端 HTML 頁面渲染（Server-Side Rendering），因此不採用完全前後端分離，以求快速實現介面。
-- **即時通訊**：**Flask-SocketIO** (WebSocket)，負責處理遊戲對戰連線、發牌、動作同步與即時聊天。
-- **前端呈現**：**HTML5 / 原生 CSS / JavaScript**，處理視覺排版、動態發牌特效，以及建立與後端的 WebSocket 端點。
-- **資料庫**：**SQLite (建議透過 SQLAlchemy ORM 作操作)**，存放結構化資料（如使用者資訊、歷史積分、房間紀錄等）。
+本專案將不採用完全前後端分離的架構，而是由後端直接渲染頁面，以利快速打造 MVP 產品。以下是核心技術選型與其原因：
 
-### MVC 架構模式說明
-整個應用程式將基於經典的 MVC（Model-View-Controller）模式變體來設計：
-- **Model (模型)**：由 SQLAlchemy 定義對應 SQLite 的表格實體（Entity），例如 `User`, `Room`, `MatchRecord`。主要負責處理資料操作與儲存。
-- **View (視圖)**：由 Jinja2 模板結合前端 CSS/JS 呈現給使用者的介面層，例如註冊表單大廳清單以及對戰用的桌布畫面。
-- **Controller (控制器)**：包含傳統的 Flask Route (`@app.route`) 與連線用的 Socket events (`@socketio.on`)。負責接收使用者請求、進行安全與防作弊驗證、實施遊戲核心邏輯（如洗牌機制），決定呼叫哪個 Model 修改資料，最終調用 View 渲染結果。
+- **後端框架**：**Python + Flask**
+  - **原因**：輕量且靈活，適合快速開發 MVP，並且有豐富的套件生態。
+- **模板引擎**：**Jinja2**
+  - **原因**：Flask 內建支援，能直接將後端資料注入 HTML，負責頁面的伺服器端渲染（SSR）。
+- **即時通訊**：**Flask-SocketIO (WebSocket)**
+  - **原因**：撲克牌對戰需要雙方「即時」看到發牌與對手出牌，傳統 HTTP 輪詢效率太差，WebSocket 是最佳解。
+- **資料庫**：**SQLite (透過 SQLAlchemy ORM)**
+  - **原因**：零配置、輕量化，適合小型專案與開發階段測試，ORM 則讓資料庫操作更直覺且易於未來擴充。
+
+### Flask MVC 模式說明
+整個應用程式採用類似 MVC (Model-View-Controller) 的設計模式來規劃職責：
+- **Model (模型)**：負責定義資料庫表格（如 `User`、`Room` 等實體），並處理所有寫入、查詢等資料庫操作。
+- **View (視圖)**：負責呈現給使用者的介面，這裡指的是 `templates/` 資料夾下的 HTML 與 Jinja2 檔案，以及前端 CSS/JS。
+- **Controller (控制器)**：負責接收使用者請求、執行商業邏輯（如判斷勝負、執行洗牌演算法）並決定呼叫哪個 Model 或渲染哪個 View。在 Flask 中，Controller 就是定義在 `@app.route` 裡的邏輯，以及 `@socketio.on` 裡的 WebSocket 事件處理。
 
 ---
 
 ## 2. 專案資料夾結構
 
-建議採用以下的資料夾結構，以達到模組化及易於維護的目的：
+為了讓程式碼好維護，我們將各個元件分門別類，結構如下：
 
 ```text
-online-board-game/
-├── app/                        ← 應用程式核心目錄
-│   ├── __init__.py             ← 載入設定、初始化 Flask App、DB 等
-│   ├── config.py               ← 全域配置變數 (Database URL, Secret Keys)
-│   ├── models/                 ← [Model] 資料庫實體定義
-│   │   ├── __init__.py
-│   │   ├── user.py             ← 使用者帳號與基本屬性
-│   │   └── game.py             ← 遊戲積分歸檔、房間等資料表
-│   ├── routes/                 ← [Controller] Flask 路由 (HTTP 請求)
-│   │   ├── __init__.py
-│   │   ├── auth.py             ← 處理註冊、登入與登出流程
-│   │   └── main.py             ← 處理大廳、個人戰績排行榜等首頁邏輯
-│   ├── sockets/                ← [Controller] 即時連線邏輯 (WebSocket 請求)
-│   │   ├── __init__.py
-│   │   └── events.py           ← 負責發牌、玩家行動同步、聊天廣播等事件
-│   ├── templates/              ← [View] Jinja2 網頁模板
-│   │   ├── base.html           ← 共用的網頁主版 Layout
-│   │   ├── auth/               ← 登入、註冊表單畫面
-│   │   └── game/               ← 遊戲大廳、對戰專屬房間桌面
+online-poker-app/
+├── app/                        ← 專案的核心應用程式目錄
+│   ├── __init__.py             ← 初始化 Flask App, 資料庫與 SocketIO
+│   ├── config.py               ← 全域設定檔 (如資料庫路徑、密鑰等)
+│   ├── models/                 ← [Model] 資料表定義與操作
+│   │   └── schemas.py          ← 使用者、房間等實體定義
+│   ├── routes/                 ← [Controller] HTTP 請求路由
+│   │   ├── main.py             ← 首頁大廳、建立房間等路由
+│   │   └── room.py             ← 遊戲房間相關的路由
+│   ├── sockets/                ← [Controller] WebSocket 即時連線事件
+│   │   └── game_events.py      ← 發牌、出牌、狀態更新等事件處理
+│   ├── templates/              ← [View] Jinja2 HTML 模板
+│   │   ├── base.html           ← 共用排版 Layout
+│   │   ├── index.html          ← 大廳首頁
+│   │   └── room.html           ← 遊戲對戰桌面
 │   └── static/                 ← 靜態資源檔案
-│       ├── css/                ← 視覺樣式與動態效果 (含卡牌翻轉動畫)
-│       ├── js/                 ← 前端互動腳本與 Socket.IO 用戶端邏輯
-│       └── images/             ← 頭像、卡牌圖示、UI 素材
-├── instance/                   ← 運作時產生的自動建立檔案與敏感資料
-│   └── database.db             ← SQLite 資料庫本體
+│       ├── css/                ← 視覺設計與撲克牌樣式
+│       ├── js/                 ← SocketIO 客戶端邏輯與動態效果
+│       └── images/             ← 撲克牌圖檔與素材
+├── instance/                   
+│   └── database.db             ← SQLite 本機資料庫檔案 (自動產生)
 ├── docs/                       ← 專案設計文件 (PRD, ARCHITECTURE 等)
-├── requirements.txt            ← Python 環境套件清單
-└── run.py                      ← 系統進入點 (Python Entry Point)
+├── requirements.txt            ← 依賴套件清單 (Flask, Flask-SocketIO 等)
+└── run.py                      ← 啟動伺服器的入口檔案
 ```
 
 ---
 
 ## 3. 元件關係圖
 
-以下展示了「連線操作與資料」如何在客戶端與後端之間流動的形式：
+以下展示玩家透過瀏覽器操作時，系統各元件是如何互相溝通的：
 
 ```mermaid
 flowchart TD
-    Browser[瀏覽器 - 玩家介面]
+    User[玩家瀏覽器]
     
-    %% Flask Routes
-    RouteMain[Flask HTTP 路由\n(Controller)]
-    RouteSockets[WebSocket 事件\n(SocketIO Controller)]
+    subgraph Controller
+        HTTP[Flask Routes\n(HTTP 請求)]
+        WS[Flask-SocketIO\n(WebSocket 事件)]
+    end
     
-    %% Backend internal
-    JinjaView[Jinja2 模板與靜態檔案\n(View)]
-    SQLModel[SQLAlchemy ORM\n(Model)]
-    SQLite[(SQLite 資料庫)]
+    subgraph Model
+        DB_Model[SQLAlchemy 模型]
+    end
     
-    %% 一般操作
-    Browser -- "HTTP GET/POST 獲取畫面與登入" --> RouteMain
-    RouteMain -- "獲取與核對資料" --> SQLModel
-    SQLModel <--> SQLite
-    RouteMain -- "將上下文傳遞給模板" --> JinjaView
-    JinjaView -- "渲染回傳 HTML" --> Browser
+    subgraph View
+        Jinja[Jinja2 模板與靜態資源]
+    end
     
-    %% 遊戲內操作
-    Browser <== "雙向連線 ( Socket 事件處理 )" ==> RouteSockets
-    RouteSockets -- "驗證出牌、發送聊天廣播" --> Browser
-    RouteSockets -- "結算分數與寫入勝敗紀錄" --> SQLModel
+    Database[(SQLite 資料庫)]
+    
+    %% HTTP Flow
+    User -- "1. GET / 或 POST 建立房間" --> HTTP
+    HTTP -- "2. 查詢/寫入資料" --> DB_Model
+    DB_Model <--> Database
+    HTTP -- "3. 傳遞變數並渲染" --> Jinja
+    Jinja -- "4. 回傳完整 HTML 頁面" --> User
+    
+    %% WebSocket Flow
+    User <== "雙向即時連線 (發牌/出牌)" ==> WS
+    WS -- "驗證邏輯與更新狀態" --> DB_Model
+    WS -- "廣播最新牌桌狀態" --> User
 ```
 
 ---
 
 ## 4. 關鍵設計決策
 
-1. **傳統 HTTP 與 WebSocket (SocketIO) 雙管齊下：**
-   - **原因：** 使用者查看排行榜、登入帳號等操作並不講求極度即時，這部分保留傳統 HTTP 請求可以節省常駐連線資源；真正的核心操作：「進入房間」與「對手進行發牌對戰」，因需要「對手動作立刻顯示在我螢幕上」的雙向推播，於是交由 WebSockets 處理，確保極低的傳輸延遲與順暢度。
+1. **混搭 HTTP 與 WebSocket：**
+   - **原因**：大廳瀏覽、建立房間等低頻率操作使用傳統 HTTP 請求，可利用 Jinja2 快速開發介面並降低伺服器常駐連線負擔；進入遊戲後的「發牌」與「出牌」則改用 WebSocket，以滿足低延遲的遊戲對戰體驗。
 
-2. **維持 Jinja2 渲染而不採前端框架（如 React / Vue）：**
-   - **原因：** MVP 時期講求能夠快速開發、展示出基礎功能並降低複雜度。不採取前後端分離，可省去大量的 API 規格設計以及跨網域請求 (CORS) 設定等阻礙，讓專案能直接以 Python 後端緊扣畫面渲染，團隊也能減少技術學習與開發的成本。
+2. **撲克牌核心邏輯放在後端 (Server-Authoritative)：**
+   - **原因**：為了防止作弊，洗牌、發牌結果以及判斷勝負的邏輯都寫在後端的 Controller (`app/sockets/game_events.py`)。前端只負責「顯示」後端傳來的牌面資料，絕對不能在瀏覽器端使用 JavaScript 自行產生牌組。
 
-3. **遊戲核心防作弊與安全性設計：**
-   - **原因：** 如果所有邏輯都寫在 JavaScript (瀏覽器端) 會使得玩家能輕易「偷看牌」或「決定發牌結果」。因此洗牌的隨機亂數演算法、抽牌動作驗證，以及遊戲結算邏輯全都放置於 `app/sockets/events.py` (Controller) 中實作以確保遊戲公平。
+3. **採用輕量級的 SQLite：**
+   - **原因**：此專案 MVP 著重於功能驗證與快速上線，不需要複雜的關聯式資料庫設定。SQLite 足以應付目前儲存使用者暱稱與房間資訊的需求，且資料庫檔案 (`database.db`) 隨附於專案中，開發非常方便。
 
-4. **採用 SQLite 結合 SQLAlchemy ORM：**
-   - **原因：** 本專案為概念開發與小型驗證用途，不須一開始就耗費時間建立像 MySQL 這樣的大規模伺服器。SQLite 不需要額外的伺服器執行環境即可將其放在 `instance/` 分區，結合 SQLAlchemy ORM 使用後，如果後續系統長大需要切換至進階資料庫，僅需修改 `config.py` 連線字串即可，極大程度保障未來可擴充性。
+4. **使用 Bootstrap 或 Tailwind CSS 加速開發：**
+   - **原因**：專案並非完全前後端分離，利用現成的 CSS 框架可以讓我們在 Jinja2 模板中快速刻出美觀的大廳與遊戲桌面，把主力放在 Flask 與 WebSocket 的連線開發上。

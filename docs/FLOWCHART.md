@@ -1,101 +1,96 @@
-# 流程圖文件 (FLOWCHART) - 線上桌遊系統
+# 系統流程圖與使用者流程 (FLOWCHART)
 
-這份文件基於 `docs/PRD.md` 與 `docs/ARCHITECTURE.md` 產出，以視覺化的方式展示使用者的操作路徑與系統內的資料流動。
+本文件基於 `docs/PRD.md` 的需求與 `docs/ARCHITECTURE.md` 的技術架構，定義出「線上撲克牌桌遊網站」的使用者操作路徑與系統資料流。
+
+---
 
 ## 1. 使用者流程圖 (User Flow)
 
-此圖展示了使用者從進入網站開始，能夠執行的各種主要功能與頁面間的跳轉。
+這張圖描述了玩家從進入網站到完成一局遊戲的完整操作路徑。
 
 ```mermaid
-flowchart LR
-    A([使用者開啟首頁]) --> B{是否已登入？}
-    B -->|否| C[登入/註冊頁面]
-    C -->|送出表單| B
-    B -->|是| D[遊戲大廳 (Main Lobby)]
+flowchart TD
+    A([玩家進入網站]) --> B[大廳首頁]
+    B --> C{選擇操作}
     
-    D --> E{選擇操作}
+    C -->|輸入暱稱| D[建立新房間]
+    C -->|輸入暱稱與房號| E[加入特定房間]
+    C -->|點擊快速配對| F[系統尋找空房間加入]
     
-    E -->|查看個人戰績與排行榜| F[歷史紀錄與排行榜頁面]
-    F --> D
+    D --> G[進入遊戲房間]
+    E --> G
+    F --> G
     
-    E -->|建立新房間| G[建立私人/公開房間]
-    E -->|隨機配對| H[隨機配對系統]
+    G --> H{房間人數是否到齊？}
+    H -->|否| I[顯示等待對手畫面]
+    I --> H
+    H -->|是| J[遊戲開始：系統自動洗牌發牌]
     
-    G --> I[等待其他玩家加入]
-    H --> I
+    J --> K[玩家回合輪替：操作與出牌]
+    K --> L{滿足結束條件？}
+    L -->|否| K
+    L -->|是| M[顯示結算畫面與勝負]
     
-    I -->|人數湊齊| J[進入遊戲桌 (轉往遊戲畫面)]
-    
-    J --> K{遊戲進行中}
-    K -->|透過對話框| L[即時聊天互動]
-    L --> K
-    K -->|系統自動觸發| M[核心系統：自動發牌]
-    M --> K
-    K -->|玩家換手回合| N[狀態同步與出牌動作]
-    N --> K
-    
-    N -->|達到結束條件| O[遊戲結束：勝敗判定]
-    O --> P[獎懲結算 (更新顯示積分)]
-    P --> D
+    M --> N{選擇下一步}
+    N -->|再來一局| G
+    N -->|離開房間| B
 ```
+
+---
 
 ## 2. 系統序列圖 (Sequence Diagram)
 
-此處描述系統中最核心場景：「建立房間/配對 -> 遊戲進行與發牌 -> 遊戲結束與寫入成績」的完整內部資料流動。
+這張圖描述了「玩家建立/加入房間」到「系統發牌與即時對戰」背後的技術實作流程，包含傳統 HTTP 請求與 WebSocket 的交替使用。
 
 ```mermaid
 sequenceDiagram
-    actor User as 使用者
-    participant Browser as Client 瀏覽器
-    participant Flask as Flask (Route & SocketIO)
-    participant Model as SQLAlchemy ORM
-    participant DB as SQLite
+    actor User as 玩家
+    participant Browser as 瀏覽器 (前端)
+    participant Flask as Flask (HTTP Controller)
+    participant Socket as Flask-SocketIO (WebSocket)
+    participant DB as SQLite (Model)
+
+    %% 房間建立與進入
+    User->>Browser: 填寫暱稱點擊「建立房間」
+    Browser->>Flask: POST /room/create (表單資料)
+    Flask->>DB: INSERT 新增玩家與房間資料
+    DB-->>Flask: 回傳房間 ID
+    Flask-->>Browser: HTTP 302 重新導向 /room/{room_id}
     
-    %% 建立房間流程
-    User->>Browser: 點擊「建立房間」
-    Browser->>Flask: POST /api/room/create
-    Flask->>Model: 呼叫新增 Room 方法
-    Model->>DB: INSERT INTO rooms
-    DB-->>Model: 回傳成功
-    Model-->>Flask: 取得新建立的 Room ID
-    Flask-->>Browser: 重導向到 /room/{id} (準備 WebSocket)
+    %% WebSocket 連線建立
+    User->>Browser: 進入房間畫面
+    Browser->>Socket: 建立 WebSocket 連線
+    Browser->>Socket: emit('join_room', {room_id, user_id})
+    Socket->>Socket: 將連線加入對應的 Socket 房間
+    Socket-->>Browser: 廣播 emit('player_joined')，更新畫面人數
     
-    %% 遊戲開始與發牌流程
-    Browser->>Flask: [Socket] Emit: 'join_room'
-    Flask-->>Browser: [Socket] Broadcast: 更新房間人數
-    Note over Flask: 偵測人數到齊，準備啟動遊戲
-    Flask->>Flask: 執行洗牌機制 (後端防作弊)
-    Flask-->>Browser: [Socket] Emit: 'deal_cards' (推播初始手牌)
-    Browser->>User: 渲染卡牌發放動畫
+    %% 遊戲開始
+    Note over User, DB: 當對手加入，房間人數滿 2 人
+    Socket->>Socket: 後端觸發洗牌與分配手牌邏輯
+    Socket-->>Browser: emit('game_start', {玩家專屬手牌資料})
+    Browser-->>User: 渲染卡牌，顯示「你的回合」
     
-    %% 遊戲中動作
-    User->>Browser: 發送聊天或出牌動作
-    Browser->>Flask: [Socket] Emit: 'game_action' / 'chat_message'
-    Note over Flask: 驗證動作合法性
-    Flask-->>Browser: [Socket] Broadcast: 同步其他玩家畫面
-    
-    %% 遊戲結算
-    Note over Flask: 遊戲結束條件達成
-    Flask->>Model: 計算輸贏、結算獎懲積分
-    Model->>DB: UPDATE users SET score, INSERT match_records
-    DB-->>Model: 回傳成功
-    Flask-->>Browser: [Socket] Emit: 'game_over' (顯示結算成績)
-    Browser->>User: 顯示最終戰績與增加/扣除之積分
+    %% 對戰互動
+    User->>Browser: 點擊卡牌出牌
+    Browser->>Socket: emit('play_card', {card_id})
+    Socket->>Socket: 驗證合法性並更新遊戲狀態
+    Socket-->>Browser: 廣播 emit('update_state', {桌面最新狀態})
+    Browser-->>User: 畫面同步顯示雙方最新卡牌
 ```
+
+---
 
 ## 3. 功能清單對照表
 
-本表列出主要功能及其對應的 URL 路徑、HTTP 方法與 Socket 事件：
+此表列出了主要功能所對應的 URL 路徑、通訊協定與方法：
 
-| 功能項目 | 通訊協定/類型 | URL 路徑 / Socket 事件 | 處理方式與對應邏輯 |
-| --- | --- | --- | --- |
-| 註冊帳號 | HTTP POST | `/auth/register` | Flask Route 處理密碼加密並寫入 User 資料表 |
-| 使用者登入 | HTTP POST | `/auth/login` | Flask Route 驗證密碼並建立 Session |
-| 遊戲大廳頁面 | HTTP GET | `/lobby` | 渲染 `lobby.html`，取得並顯示目前公開房間清單 |
-| 個人戰績與排行 | HTTP GET | `/leaderboard` | 查詢成績並渲染排行榜畫面 |
-| 建立房間 API | HTTP POST | `/api/room/create` | 寫入房間紀錄，回傳 Room ID 供跳轉 |
-| 進入遊戲桌面 | HTTP GET | `/room/<room_id>` | 渲染 `game.html` 介面，載入 WebSocket 用戶端腳本 |
-| 即時聊天室 | WebSocket | Event: `chat_message` | 將玩家文字廣播給該房間 (`room_id`) 內的所有用戶 |
-| 接收發牌資訊 | WebSocket | Event: `deal_cards` | 遊戲啟動時，由後端運算洗牌並對各玩家發送專屬牌組 |
-| 遊戲內出牌動作 | WebSocket | Event: `player_action` | 玩家送出動作，由後端伺服器驗證合法性並推播狀態更新 |
-| 勝負獎懲結算 | WebSocket | Event: `game_over` | 廣播勝負結果，後端同步寫入 DB 更新雙方積分與戰績 |
+| 功能名稱 | URL 路徑 / Event 名稱 | 協定與方法 | 說明 |
+| :--- | :--- | :--- | :--- |
+| **進入首頁大廳** | `/` | HTTP `GET` | 顯示輸入暱稱與選擇操作的介面。 |
+| **建立房間** | `/room/create` | HTTP `POST` | 接收暱稱，在資料庫建立房間後重新導向至房間頁面。 |
+| **加入房間** | `/room/<room_id>` | HTTP `GET` | 進入特定的遊戲房間畫面並載入基本前端資源。 |
+| **加入即時連線** | `join_room` | WS `emit` | 前端建立連線後，主動告知後端將自己加入該 Socket 房間。 |
+| **開始遊戲與發牌** | `game_start` | WS `broadcast` | 當人數到齊，後端自動洗牌並推播各自的手牌給對應玩家。 |
+| **玩家出牌** | `play_card` | WS `emit` | 玩家進行遊戲操作時，傳送出牌動作給後端。 |
+| **更新遊戲狀態** | `update_state` | WS `broadcast` | 後端驗證出牌後，將最新牌桌資訊與當前輪替玩家推播給所有人。 |
+| **遊戲結算** | `game_over` | WS `broadcast` | 達成勝利條件時推播結果，前端渲染勝負結算畫面。 |
