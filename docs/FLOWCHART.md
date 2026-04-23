@@ -46,9 +46,9 @@ flowchart TD
 sequenceDiagram
     actor User as 玩家
     participant Browser as 瀏覽器 (前端)
-    participant Flask as Flask (HTTP Controller)
-    participant Socket as Flask-SocketIO (WebSocket)
-    participant DB as SQLite (Model)
+    participant Flask as Flask Routes (main.py/room.py)
+    participant Socket as SocketIO Events (game_events.py)
+    participant DB as SQLAlchemy (schemas.py)
 
     %% 房間建立與進入
     User->>Browser: 填寫暱稱點擊「建立房間」
