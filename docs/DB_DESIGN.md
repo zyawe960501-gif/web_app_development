@@ -1,71 +1,64 @@
 # 資料庫設計文件 (DB_DESIGN)
 
-本文件依據 PRD 與架構設計，定義系統所需的實體關係與建表語法。本專案將採用 SQLAlchemy 結合 SQLite 做為主要存放方案。
+本文件基於 PRD 與流程圖的需求，規劃「線上撲克牌桌遊網站」的資料庫結構。我們採用 SQLite 與 SQLAlchemy ORM。
 
-## 1. 實體關係圖 (ER Diagram)
+---
+
+## 1. ER 圖（實體關係圖）
 
 ```mermaid
 erDiagram
-  users {
-    integer id PK
-    string username
-    string password_hash
-    integer score "Default: 0"
-    datetime created_at
-  }
-  
-  rooms {
-    integer id PK
-    string name
-    boolean is_private
-    string status "waiting, playing, finished"
-    integer created_by FK "users.id"
-    datetime created_at
-  }
-  
-  match_records {
-    integer id PK
-    integer room_id FK "rooms.id"
-    integer player_id FK "users.id"
-    integer opponent_id FK "users.id"
-    string result "win, lose, draw"
-    integer score_change
-    datetime played_at
-  }
-  
-  users ||--o{ rooms : "建立"
-  rooms ||--o{ match_records : "擁有"
-  users ||--o{ match_records : "遊玩"
+    USER {
+        int id PK
+        string nickname "玩家暱稱"
+        datetime created_at
+    }
+    
+    ROOM {
+        int id PK
+        string room_code "6碼房間代碼 (Unique)"
+        int host_id FK "房主 User ID"
+        int guest_id FK "加入者 User ID (Nullable)"
+        string status "waiting, playing, finished"
+        datetime created_at
+    }
+    
+    MATCH_RECORD {
+        int id PK
+        int room_id FK "對應房間 ID"
+        int winner_id FK "獲勝者 ID"
+        int loser_id FK "落敗者 ID"
+        datetime finished_at
+    }
+
+    USER ||--o{ ROOM : "建立 (Host)"
+    USER ||--o{ ROOM : "加入 (Guest)"
+    ROOM ||--o| MATCH_RECORD : "產生結算紀錄"
 ```
+
+---
 
 ## 2. 資料表詳細說明
 
-### `users` 資料表
-儲存使用者帳號與整體積分。
-- `id` (INTEGER): 主鍵，自動遞增。
-- `username` (VARCHAR): 使用者名稱，必填且唯一。
-- `password_hash` (VARCHAR): 加密後的密碼字串。
-- `score` (INTEGER): 使用者的總積分，用於排行榜與歷史結算。預設為 `0`。
-- `created_at` (DATETIME): 帳號建立時間。
+### 2.1 USERS (使用者表)
+儲存玩家的基本資料，為免註冊系統，每次使用者進入系統時可建立一個暫時暱稱。
+- `id` (INTEGER): Primary Key，自動遞增。
+- `nickname` (TEXT): 必填，玩家選擇的顯示名稱。
+- `created_at` (DATETIME): 建立時間，預設為當下。
 
-### `rooms` 資料表
-儲存建立的遊戲房間。
-- `id` (INTEGER): 主鍵，自動遞增。
-- `name` (VARCHAR): 房間名稱（可為自訂名稱）。
-- `is_private` (BOOLEAN): 判斷是否為私人房間（不顯示在公開配對大廳中）。預設 `False`。
-- `status` (VARCHAR): 房間當前狀態。可為 `waiting`（等待中）、`playing`（遊戲中）、`finished`（結束）。預設 `waiting`。
-- `created_by` (INTEGER): 創建者的使用者 ID（關聯 `users.id`）。
-- `created_at` (DATETIME): 房間建立時間。
+### 2.2 ROOMS (遊戲房間表)
+負責記錄當下開局的房間狀態、人數與加入成員。
+- `id` (INTEGER): Primary Key，自動遞增。
+- `room_code` (TEXT): 必填且唯一，供玩家輸入加入的 6 碼代號。
+- `host_id` (INTEGER): Foreign Key (USERS.id)，必填，建立房間的房主。
+- `guest_id` (INTEGER): Foreign Key (USERS.id)，選填，加入房間的對手玩家。
+- `status` (TEXT): 房間狀態，預設為 `'waiting'`，可變更為 `'playing'` 或 `'finished'`。
+- `created_at` (DATETIME): 建立時間。
 
-### `match_records` 資料表
-儲存每局對戰後的成績結算紀錄，方便回首歷史戰績與計算個人勝率。
-- `id` (INTEGER): 主鍵，自動遞增。
-- `room_id` (INTEGER): 關聯該次遊戲發生的房間 ID（關聯 `rooms.id`）。
-- `player_id` (INTEGER): 主視角的玩家 ID（關聯 `users.id`）。
-- `opponent_id` (INTEGER): 對手玩家 ID（關聯 `users.id`，若支援多人未來可改為其他機制）。
-- `result` (VARCHAR): 遊戲結果，可為 `win`（勝）、`lose`（敗）、`draw`（平手）。
-- `score_change` (INTEGER): 該場遊戲玩家減少或增加的積分變動值。
-- `played_at` (DATETIME): 比賽遊玩結束/紀錄產生的時間。
-
-## 3. SQL 建表語法
-相關的原始建表語法，已輸出至 `database/schema.sql`，也可以由 SQLAlchemy 自動建立。
+### 2.3 MATCH_RECORDS (對戰紀錄表)
+當遊戲結束時，寫入此表以產生結算結果與歷史戰績。
+- `id` (INTEGER): Primary Key，自動遞增。
+- `room_id` (INTEGER): Foreign Key (ROOMS.id)，對應的房間。
+- `winner_id` (INTEGER): Foreign Key (USERS.id)，獲勝者。
+- `loser_id` (INTEGER): Foreign Key (USERS.id)，落敗者。
+- `finished_at` (DATETIME): 對戰結束時間。

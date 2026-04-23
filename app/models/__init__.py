@@ -1,3 +1,5 @@
-from flask_sqlalchemy import SQLAlchemy
+from .user import User
+from .room import Room
+from .match_record import MatchRecord
 
-db = SQLAlchemy()
+__all__ = ['User', 'Room', 'MatchRecord']
